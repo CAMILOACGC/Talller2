@@ -1,9 +1,12 @@
 package com.example.taller2
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -14,14 +17,18 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.taller2.model.ChatMessage
 import com.example.taller2.model.GameRoom
-import com.example.taller2.model.Player
 import com.example.taller2.ui.theme.Taller2Theme
 import com.example.taller2.viewmodel.GameViewModel
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
 
 class MainActivity : ComponentActivity() {
     private val viewModel: GameViewModel by viewModels()
@@ -44,32 +51,127 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun GameApp(viewModel: GameViewModel) {
+    val currentUser by viewModel.currentUser.collectAsState()
     val gameRoom by viewModel.gameRoom.collectAsState()
     val currentPlayerId by viewModel.currentPlayerId.collectAsState()
     var playerName by remember { mutableStateOf("") }
     var roomId by remember { mutableStateOf("room1") }
 
-    if (currentPlayerId == null) {
+    if (currentUser == null) {
+        AuthScreen(viewModel)
+    } else if (currentPlayerId == null) {
         JoinScreen(
             playerName = playerName,
             onPlayerNameChange = { playerName = it },
             roomId = roomId,
             onRoomIdChange = { roomId = it },
-            onJoin = { viewModel.joinRoom(roomId, playerName) }
+            onJoin = { viewModel.joinRoom(roomId, playerName) },
+            onSignOut = { viewModel.signOut() }
         )
     } else {
         if (gameRoom == null) {
-            // Pantalla de carga para que no se vea negro
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator()
                     Spacer(modifier = Modifier.height(16.dp))
                     Text("Conectando a la sala...")
-                    Text("Verifica tu conexión a Firebase en el Logcat", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 }
             }
         } else {
             GameScreen(gameRoom!!, currentPlayerId!!, viewModel)
+        }
+    }
+}
+
+@Composable
+fun AuthScreen(viewModel: GameViewModel) {
+    val context = LocalContext.current
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    val authError by viewModel.authError.collectAsState()
+
+    // Configuración de Google Sign-In usando el Client ID del JSON
+    val gso = remember {
+        GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestIdToken("710428830847-nb1rfhgvjbrgh9gtd179phecu9mtvcqj.apps.googleusercontent.com")
+            .requestEmail()
+            .build()
+    }
+    val googleSignInClient = remember { GoogleSignIn.getClient(context, gso) }
+
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        try {
+            val account = task.getResult(ApiException::class.java)
+            account?.idToken?.let { viewModel.signInWithGoogle(it) {} }
+        } catch (e: ApiException) {
+            Log.e("Auth", "Google sign in failed code: ${e.statusCode}")
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("Tío Rico - Autenticación", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(32.dp))
+        
+        TextField(
+            value = email,
+            onValueChange = { email = it },
+            label = { Text("Correo electrónico") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        TextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Contraseña") },
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        
+        if (authError != null) {
+            Text(authError!!, color = Color.Red, modifier = Modifier.padding(top = 8.dp), fontSize = 12.sp)
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        
+        val canAuth = email.isNotBlank() && password.length >= 6
+        
+        Button(
+            onClick = { viewModel.signIn(email, password) {} },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = canAuth
+        ) {
+            Text("Iniciar Sesión")
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = { viewModel.signUp(email, password) {} },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = canAuth
+        ) {
+            Text("Registrarse")
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Button(
+            onClick = { launcher.launch(googleSignInClient.signInIntent) },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4285F4))
+        ) {
+            Text("Continuar con Google", color = Color.White)
+        }
+        
+        if (password.isNotEmpty() && password.length < 6) {
+            Text("Mínimo 6 caracteres", fontSize = 11.sp, color = Color.Gray)
         }
     }
 }
@@ -80,19 +182,20 @@ fun JoinScreen(
     onPlayerNameChange: (String) -> Unit,
     roomId: String,
     onRoomIdChange: (String) -> Unit,
-    onJoin: () -> Unit
+    onJoin: () -> Unit,
+    onSignOut: () -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("Tío Rico - Modo Supervivencia", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text("Bienvenido al Juego", fontSize = 24.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(32.dp))
         TextField(
             value = playerName,
             onValueChange = onPlayerNameChange,
-            label = { Text("Tu nombre") },
+            label = { Text("Tu nombre de jugador") },
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(modifier = Modifier.height(16.dp))
@@ -110,6 +213,10 @@ fun JoinScreen(
         ) {
             Text("Entrar a la Sala")
         }
+        Spacer(modifier = Modifier.height(16.dp))
+        TextButton(onClick = onSignOut) {
+            Text("Cerrar Sesión")
+        }
     }
 }
 
@@ -119,7 +226,6 @@ fun GameScreen(room: GameRoom, currentPlayerId: String, viewModel: GameViewModel
     val messages by viewModel.messages.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        // Game Header
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -130,7 +236,12 @@ fun GameScreen(room: GameRoom, currentPlayerId: String, viewModel: GameViewModel
         }
         
         Spacer(modifier = Modifier.height(8.dp))
-        Text("Estado: ${room.status}", style = MaterialTheme.typography.bodySmall)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Estado: ${room.status}", style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { viewModel.signOut() }) {
+                Text("Salir", color = Color.Gray)
+            }
+        }
 
         if (room.status == "WAITING") {
             Button(onClick = { viewModel.startGame(room.id) }, modifier = Modifier.fillMaxWidth()) {
@@ -140,7 +251,6 @@ fun GameScreen(room: GameRoom, currentPlayerId: String, viewModel: GameViewModel
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Players List
         Text("Jugadores:", fontWeight = FontWeight.Bold)
         LazyColumn(modifier = Modifier.height(100.dp)) {
             items(room.players.values.toList()) { player ->
@@ -150,7 +260,6 @@ fun GameScreen(room: GameRoom, currentPlayerId: String, viewModel: GameViewModel
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Actions
         if (room.status == "PLAYING" && currentPlayer.isAlive) {
             if (currentPlayer.turnPlayed < room.currentTurn) {
                 Text("Elige tu acción para este turno:")
@@ -173,13 +282,10 @@ fun GameScreen(room: GameRoom, currentPlayerId: String, viewModel: GameViewModel
             Button(onClick = { viewModel.restartGame(room.id) }, modifier = Modifier.fillMaxWidth()) {
                 Text("Reiniciar Juego")
             }
-        } else if (!currentPlayer.isAlive) {
-            Text("ESTÁS ELIMINADO", color = Color.Red, fontWeight = FontWeight.Bold)
         }
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // Chat
         ChatSection(messages = messages, onSendMessage = { text ->
             viewModel.sendMessage(room.id, text, currentPlayer.name)
         })

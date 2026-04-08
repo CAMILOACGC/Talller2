@@ -6,6 +6,9 @@ import com.example.taller2.logic.GameLogic
 import com.example.taller2.model.ChatMessage
 import com.example.taller2.model.GameRoom
 import com.example.taller2.model.Player
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
@@ -14,9 +17,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 class GameViewModel : ViewModel() {
-    // Si tienes la URL de tu base de datos, ponla aquí: FirebaseDatabase.getInstance("URL").reference
+    private val auth = FirebaseAuth.getInstance()
     private val database = FirebaseDatabase.getInstance().reference
     
+    private val _currentUser = MutableStateFlow<FirebaseUser?>(auth.currentUser)
+    val currentUser: StateFlow<FirebaseUser?> = _currentUser
+
     private val _gameRoom = MutableStateFlow<GameRoom?>(null)
     val gameRoom: StateFlow<GameRoom?> = _gameRoom
 
@@ -26,40 +32,87 @@ class GameViewModel : ViewModel() {
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages
 
+    private val _authError = MutableStateFlow<String?>(null)
+    val authError: StateFlow<String?> = _authError
+
+    fun signUp(email: String, pass: String, onSuccess: () -> Unit) {
+        auth.createUserWithEmailAndPassword(email, pass)
+            .addOnSuccessListener { _currentUser.value = auth.currentUser; onSuccess() }
+            .addOnFailureListener { _authError.value = it.message }
+    }
+
+    fun signIn(email: String, pass: String, onSuccess: () -> Unit) {
+        auth.signInWithEmailAndPassword(email, pass)
+            .addOnSuccessListener { _currentUser.value = auth.currentUser; onSuccess() }
+            .addOnFailureListener { _authError.value = it.message }
+    }
+
+    fun signInWithGoogle(idToken: String, onSuccess: () -> Unit) {
+        val credential = GoogleAuthProvider.getCredential(idToken, null)
+        auth.signInWithCredential(credential)
+            .addOnSuccessListener { _currentUser.value = auth.currentUser; onSuccess() }
+            .addOnFailureListener { _authError.value = it.message }
+    }
+
+    fun signOut() {
+        auth.signOut()
+        _currentUser.value = null
+        _currentPlayerId.value = null
+        _gameRoom.value = null
+    }
+
     fun joinRoom(roomId: String, playerName: String) {
-        Log.d("FirebaseGame", "Intentando unirse a sala: $roomId con nombre: $playerName")
-        val playerId = database.child("rooms").child(roomId).child("players").push().key ?: return
+        val user = auth.currentUser ?: return
+        val playerId = user.uid
         _currentPlayerId.value = playerId
         
+        Log.d("FirebaseGame", "Iniciando union a sala $roomId")
+        
         val player = Player(id = playerId, name = playerName)
-        database.child("rooms").child(roomId).child("players").child(playerId).setValue(player)
-            .addOnSuccessListener {
-                Log.d("FirebaseGame", "Jugador agregado exitosamente")
-                observeRoom(roomId)
+        
+        // Primero nos aseguramos de que la sala tenga estructura base
+        database.child("rooms").child(roomId).child("id").addListenerForSingleValueEvent(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                if (!snapshot.exists()) {
+                    // Si la sala no existe, la inicializamos
+                    val initialRoom = mapOf(
+                        "id" to roomId,
+                        "status" to "WAITING",
+                        "currentTurn" to 1
+                    )
+                    database.child("rooms").child(roomId).updateChildren(initialRoom)
+                }
+                
+                // Luego agregamos al jugador
+                database.child("rooms").child(roomId).child("players").child(playerId).setValue(player)
+                    .addOnSuccessListener {
+                        Log.d("FirebaseGame", "Jugador guardado, observando sala...")
+                        observeRoom(roomId)
+                    }
+                    .addOnFailureListener {
+                        Log.e("FirebaseGame", "Error al guardar jugador: ${it.message}")
+                        _authError.value = "Error de base de datos: Verifica las reglas (Rules)"
+                    }
             }
-            .addOnFailureListener {
-                Log.e("FirebaseGame", "Error al agregar jugador", it)
+            override fun onCancelled(error: DatabaseError) {
+                Log.e("FirebaseGame", "Error de lectura inicial: ${error.message}")
             }
+        })
     }
 
     private fun observeRoom(roomId: String) {
         database.child("rooms").child(roomId).addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                Log.d("FirebaseGame", "Datos recibidos de la sala: ${snapshot.exists()}")
                 val room = snapshot.getValue(GameRoom::class.java)
-                _gameRoom.value = room
-                
-                room?.messages?.let {
-                    _messages.value = it.values.sortedBy { m -> m.timestamp }
-                }
-                
-                if (room != null && room.status == "PLAYING") {
-                    checkTurnCompletion(room)
+                if (room != null) {
+                    Log.d("FirebaseGame", "Sala cargada: ${room.id} con ${room.players.size} jugadores")
+                    _gameRoom.value = room
+                    room.messages?.let { _messages.value = it.values.sortedBy { m -> m.timestamp } }
+                    if (room.status == "PLAYING") checkTurnCompletion(room)
                 }
             }
-
             override fun onCancelled(error: DatabaseError) {
-                Log.e("FirebaseGame", "Error en Firebase: ${error.message} - ${error.details}")
+                Log.e("FirebaseGame", "Listener cancelado: ${error.message}")
             }
         })
     }
@@ -67,7 +120,6 @@ class GameViewModel : ViewModel() {
     private fun checkTurnCompletion(room: GameRoom) {
         val activePlayers = room.players.values.filter { it.isAlive }
         val playersWhoPlayed = activePlayers.filter { it.turnPlayed == room.currentTurn }
-        
         if (activePlayers.isNotEmpty() && playersWhoPlayed.size == activePlayers.size) {
             if (room.currentTurn < GameLogic.MAX_TURNS) {
                 database.child("rooms").child(room.id).child("currentTurn").setValue(room.currentTurn + 1)
@@ -78,28 +130,22 @@ class GameViewModel : ViewModel() {
     }
 
     fun startGame(roomId: String) {
-        database.child("rooms").child(roomId).child("id").setValue(roomId)
         database.child("rooms").child(roomId).child("status").setValue("PLAYING")
     }
 
     fun performAction(roomId: String, playerId: String, action: String) {
         val room = _gameRoom.value ?: return
         val player = room.players[playerId] ?: return
-        
         if (!player.isAlive || player.turnPlayed == room.currentTurn) return
-
         var newMoney = GameLogic.calculateNewMoney(player.money, action)
         newMoney = GameLogic.applyRandomEvent(newMoney)
-
         val stillAlive = GameLogic.isPlayerAlive(newMoney)
-        
         val updates = hashMapOf<String, Any>(
             "players/$playerId/money" to if (stillAlive) newMoney else 0,
             "players/$playerId/isAlive" to stillAlive,
             "players/$playerId/turnPlayed" to room.currentTurn,
             "players/$playerId/lastAction" to action
         )
-        
         database.child("rooms").child(roomId).updateChildren(updates)
     }
 
@@ -115,10 +161,7 @@ class GameViewModel : ViewModel() {
             p.copy(money = GameLogic.INITIAL_MONEY, isAlive = true, turnPlayed = 0, lastAction = "")
         }
         database.child("rooms").child(roomId).updateChildren(mapOf(
-            "status" to "WAITING",
-            "currentTurn" to 1,
-            "players" to updatedPlayers,
-            "messages" to null
+            "status" to "WAITING", "currentTurn" to 1, "players" to updatedPlayers, "messages" to null
         ))
     }
 }

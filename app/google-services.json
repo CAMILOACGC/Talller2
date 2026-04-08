@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "710428830847",
+    "firebase_url": "https://tiorico-5d4dd-default-rtdb.firebaseio.com",
     "project_id": "tiorico-5d4dd",
     "storage_bucket": "tiorico-5d4dd.firebasestorage.app"
   },
@@ -12,7 +13,20 @@
           "package_name": "com.example.taller2"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "710428830847-ngke0lkourmfn5e0is0h7f1elp6k2mkk.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.taller2",
+            "certificate_hash": "564453b5b0969cbef74c13c089e610900825b42a"
+          }
+        },
+        {
+          "client_id": "710428830847-nb1rfhgvjbrgh9gtd179phecu9mtvcqj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyAt59bsqplujbc5vjVANca6e7usQ_ZOrzc"
@@ -20,7 +34,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "710428830847-nb1rfhgvjbrgh9gtd179phecu9mtvcqj.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }
