@@ -1,3 +1,10 @@
 <resources>
     <string name="app_name">Taller2</string>
+    <string name="auth_title">Tío Rico - Autenticación</string>
+    <string name="email_label">Correo electrónico</string>
+    <string name="password_label">Contraseña</string>
+    <string name="login_button">Iniciar Sesión</string>
+    <string name="signup_button">Registrarse</string>
+    <string name="google_button">Continuar con Google</string>
+    <string name="password_too_short">Mínimo 6 caracteres</string>
 </resources>
