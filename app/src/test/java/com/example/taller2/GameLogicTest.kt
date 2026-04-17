@@ -46,7 +46,7 @@ class GameLogicTest {
         // In the logic: random.nextInt(-200, 301)
         // Let's just check if it stays within bounds manually or with a specific seed
         val result = GameLogic.calculateNewMoney(initialMoney, "INVEST", fixedRandom)
-        
+
         // Random(42).nextInt(-200, 301) with seed 42 is usually consistent
         // But the main point is it should be different from initialMoney
         assertNotEquals(initialMoney, result)
