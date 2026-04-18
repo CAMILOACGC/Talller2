@@ -12,19 +12,24 @@ object GameLogic {
     const val SAVE_GAIN = 100
     const val SPEND_LOSS = 150
 
+    // Constantes para las acciones para evitar strings hardcoded en la lógica
+    const val ACTION_SAVE = "SAVE"
+    const val ACTION_INVEST = "INVEST"
+    const val ACTION_SPEND = "SPEND"
+
     /**
      * Calcula el nuevo saldo basado en la acción elegida.
      */
     fun calculateNewMoney(currentMoney: Int, action: String, random: Random = Random.Default): Int {
         var newMoney = currentMoney
         when (action) {
-            "SAVE" -> newMoney += SAVE_GAIN
-            "INVEST" -> {
+            ACTION_SAVE -> newMoney += GameLogic.SAVE_GAIN
+            ACTION_INVEST -> {
                 // Invertir puede generar ganancias (-200 a 300)
                 val result = random.nextInt(-200, 301)
                 newMoney += result
             }
-            "SPEND" -> newMoney -= SPEND_LOSS
+            ACTION_SPEND -> newMoney -= GameLogic.SPEND_LOSS
         }
         return newMoney
     }
@@ -53,6 +58,6 @@ object GameLogic {
      * Verifica si el jugador ha ganado al llegar al turno final.
      */
     fun checkVictory(currentTurn: Int, money: Int): Boolean {
-        return currentTurn >= MAX_TURNS && money > 0
+        return currentTurn >= GameLogic.MAX_TURNS && money > 0
     }
 }
