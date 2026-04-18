@@ -124,14 +124,19 @@ class GameViewModel : ViewModel() {
     }
 
     private fun checkTurnCompletion(room: GameRoom) {
-        val activePlayers = room.players.values.filter { it.isAlive }
+        val allPlayers = room.players.values
+        // REGLA: Solo esperamos turnos de jugadores VIVOS con dinero
+        val activePlayers = allPlayers.filter { it.isAlive && it.money > 0 }
         
-        if (activePlayers.size <= 1 && room.players.size > 1) {
+        // Si no quedan jugadores activos, la partida termina
+        if (activePlayers.isEmpty() && allPlayers.isNotEmpty()) {
             database.child("rooms").child(room.id).child("status").setValue("FINISHED")
             return
         }
 
         val playersWhoPlayed = activePlayers.filter { it.turnPlayed == room.currentTurn }
+        
+        // Si todos los jugadores ACTIVOS ya jugaron, avanzamos turno
         if (activePlayers.isNotEmpty() && playersWhoPlayed.size == activePlayers.size) {
             if (room.currentTurn < GameLogic.MAX_TURNS) {
                 database.child("rooms").child(room.id).child("currentTurn").setValue(room.currentTurn + 1)
@@ -147,18 +152,30 @@ class GameViewModel : ViewModel() {
         database.child("rooms").child(roomId).child("status").setValue("PLAYING")
     }
 
-    fun resetEntireRoom(roomId: String) {
-        database.child("rooms").child(roomId).removeValue()
-    }
-
     fun performAction(roomId: String, playerId: String, action: String) {
         val room = _gameRoom.value ?: return
         val player = room.players[playerId] ?: return
-        if (!player.isAlive || player.turnPlayed == room.currentTurn) return
-        var newMoney = GameLogic.calculateNewMoney(player.money, action)
-        newMoney = GameLogic.applyRandomEvent(newMoney)
-        val stillAlive = newMoney > 0
+        
+        if (player.turnPlayed == room.currentTurn) return
+
+        var newMoney = player.money
+        var stillAlive = player.isAlive
+
+        if (action == "SKIP") {
+            newMoney = 0
+            stillAlive = false
+        } else if (player.isAlive && player.money > 0) {
+            newMoney = GameLogic.calculateNewMoney(player.money, action)
+            newMoney = GameLogic.applyRandomEvent(newMoney)
+            stillAlive = newMoney > 0
+        } else {
+            // Si el jugador intenta jugar estando muerto o con 0
+            newMoney = 0
+            stillAlive = false
+        }
+
         val finalMoney = if (stillAlive) newMoney else 0
+
         val updates = hashMapOf<String, Any>(
             "players/$playerId/money" to finalMoney,
             "players/$playerId/isAlive" to stillAlive,
