@@ -1,14 +1,11 @@
 package com.example.taller2.viewmodel
 
-import android.util.Log
 import androidx.lifecycle.ViewModel
 import com.example.taller2.logic.GameLogic
 import com.example.taller2.model.ChatMessage
 import com.example.taller2.model.GameRoom
 import com.example.taller2.model.Player
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseUser
-import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
@@ -19,9 +16,6 @@ import kotlinx.coroutines.flow.StateFlow
 class GameViewModel : ViewModel() {
     private val auth = FirebaseAuth.getInstance()
     private val database = FirebaseDatabase.getInstance().reference
-    
-    private val _currentUser = MutableStateFlow<FirebaseUser?>(auth.currentUser)
-    val currentUser: StateFlow<FirebaseUser?> = _currentUser
 
     private val _gameRoom = MutableStateFlow<GameRoom?>(null)
     val gameRoom: StateFlow<GameRoom?> = _gameRoom
@@ -31,28 +25,6 @@ class GameViewModel : ViewModel() {
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages
-
-    private val _authError = MutableStateFlow<String?>(null)
-    val authError: StateFlow<String?> = _authError
-
-    fun signUp(email: String, pass: String, onSuccess: () -> Unit) {
-        auth.createUserWithEmailAndPassword(email, pass).addOnSuccessListener { _currentUser.value = auth.currentUser; onSuccess() }.addOnFailureListener { _authError.value = it.message }
-    }
-
-    fun signIn(email: String, pass: String, onSuccess: () -> Unit) {
-        auth.signInWithEmailAndPassword(email, pass).addOnSuccessListener { _currentUser.value = auth.currentUser; onSuccess() }.addOnFailureListener { _authError.value = it.message }
-    }
-
-    fun signInWithGoogle(idToken: String, onSuccess: () -> Unit) {
-        val credential = GoogleAuthProvider.getCredential(idToken, null)
-        auth.signInWithCredential(credential).addOnSuccessListener { _currentUser.value = auth.currentUser; onSuccess() }.addOnFailureListener { _authError.value = it.message }
-    }
-
-    fun signOut() {
-        leaveRoom()
-        auth.signOut()
-        _currentUser.value = null
-    }
 
     fun leaveRoom() {
         val pid = _currentPlayerId.value
@@ -125,23 +97,18 @@ class GameViewModel : ViewModel() {
 
     private fun checkTurnCompletion(room: GameRoom) {
         val allPlayers = room.players.values
-        // REGLA: Solo esperamos turnos de jugadores VIVOS con dinero
-        val activePlayers = allPlayers.filter { it.isAlive && it.money > 0 }
-        
-        // Si no quedan jugadores activos, la partida termina
-        if (activePlayers.isEmpty() && allPlayers.isNotEmpty()) {
-            database.child("rooms").child(room.id).child("status").setValue("FINISHED")
-            return
-        }
+        if (allPlayers.isEmpty()) return
 
-        val playersWhoPlayed = activePlayers.filter { it.turnPlayed == room.currentTurn }
+        val playersWhoPlayed = allPlayers.filter { it.turnPlayed == room.currentTurn }
         
-        // Si todos los jugadores ACTIVOS ya jugaron, avanzamos turno
-        if (activePlayers.isNotEmpty() && playersWhoPlayed.size == activePlayers.size) {
-            if (room.currentTurn < GameLogic.MAX_TURNS) {
-                database.child("rooms").child(room.id).child("currentTurn").setValue(room.currentTurn + 1)
-            } else {
+        if (playersWhoPlayed.size == allPlayers.size) {
+            val someoneLost = allPlayers.any { it.money <= 0 }
+            val maxTurnsReached = room.currentTurn >= GameLogic.MAX_TURNS
+
+            if (someoneLost || maxTurnsReached) {
                 database.child("rooms").child(room.id).child("status").setValue("FINISHED")
+            } else {
+                database.child("rooms").child(room.id).child("currentTurn").setValue(room.currentTurn + 1)
             }
         }
     }
@@ -169,7 +136,6 @@ class GameViewModel : ViewModel() {
             newMoney = GameLogic.applyRandomEvent(newMoney)
             stillAlive = newMoney > 0
         } else {
-            // Si el jugador intenta jugar estando muerto o con 0
             newMoney = 0
             stillAlive = false
         }

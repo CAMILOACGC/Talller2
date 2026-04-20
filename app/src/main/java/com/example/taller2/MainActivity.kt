@@ -25,14 +25,17 @@ import androidx.compose.ui.unit.sp
 import com.example.taller2.model.ChatMessage
 import com.example.taller2.model.GameRoom
 import com.example.taller2.model.Player
+import com.example.taller2.ui.GameScreen
 import com.example.taller2.ui.theme.Taller2Theme
+import com.example.taller2.viewmodel.AuthViewModel
 import com.example.taller2.viewmodel.GameViewModel
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
 
 class MainActivity : ComponentActivity() {
-    private val viewModel: GameViewModel by viewModels()
+    private val authViewModel: AuthViewModel by viewModels()
+    private val gameViewModel: GameViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,7 +43,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             Taller2Theme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    GameApp(viewModel)
+                    GameApp(authViewModel, gameViewModel)
                 }
             }
         }
@@ -48,23 +51,23 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun GameApp(viewModel: GameViewModel) {
-    val currentUser by viewModel.currentUser.collectAsState()
-    val gameRoom by viewModel.gameRoom.collectAsState()
-    val currentPlayerId by viewModel.currentPlayerId.collectAsState()
+fun GameApp(authViewModel: AuthViewModel, gameViewModel: GameViewModel) {
+    val currentUser by authViewModel.currentUser.collectAsState()
+    val gameRoom by gameViewModel.gameRoom.collectAsState()
+    val currentPlayerId by gameViewModel.currentPlayerId.collectAsState()
     var playerName by remember { mutableStateOf("") }
     var roomId by remember { mutableStateOf("room1") }
 
     if (currentUser == null) {
-        AuthScreen(viewModel)
+        AuthScreen(authViewModel)
     } else if (currentPlayerId == null) {
         JoinScreen(
             playerName = playerName,
             onPlayerNameChange = { playerName = it },
             roomId = roomId,
             onRoomIdChange = { roomId = it },
-            onJoin = { viewModel.joinRoom(roomId, playerName) },
-            onSignOut = { viewModel.signOut() }
+            onJoin = { gameViewModel.joinRoom(roomId, playerName) },
+            onSignOut = { authViewModel.signOut { gameViewModel.leaveRoom() } }
         )
     } else {
         if (gameRoom == null) {
@@ -76,13 +79,13 @@ fun GameApp(viewModel: GameViewModel) {
                 }
             }
         } else {
-            GameScreen(gameRoom!!, currentPlayerId!!, viewModel)
+            com.example.taller2.ui.GameScreen(gameRoom!!, currentPlayerId!!, gameViewModel, authViewModel)
         }
     }
 }
 
 @Composable
-fun AuthScreen(viewModel: GameViewModel) {
+fun AuthScreen(viewModel: AuthViewModel) {
     val context = LocalContext.current
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -143,84 +146,3 @@ fun JoinScreen(playerName: String, onPlayerNameChange: (String) -> Unit, roomId:
     }
 }
 
-@Composable
-fun GameScreen(room: GameRoom, currentPlayerId: String, viewModel: GameViewModel) {
-    val currentPlayer = room.players[currentPlayerId] ?: return
-    val messages by viewModel.messages.collectAsState()
-    val isHost = room.hostId == currentPlayerId
-
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column {
-                Text("Turno: ${room.currentTurn}/10 | $${currentPlayer.money}", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                if (isHost) Text("HOST", color = Color(0xFFFFD700), fontWeight = FontWeight.Bold)
-            }
-            TextButton(onClick = { viewModel.leaveRoom() }) {
-                Text("SALIR", color = Color.Gray, fontWeight = FontWeight.Bold)
-            }
-        }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-
-        if (room.status == "WAITING") {
-            if (isHost) {
-                Button(onClick = { viewModel.startGame(room.id) }, modifier = Modifier.fillMaxWidth()) { Text("INICIAR PARTIDA") }
-            } else {
-                Text("Esperando inicio del host...", color = Color.Gray)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("Jugadores:", fontWeight = FontWeight.Bold)
-        LazyColumn(modifier = Modifier.height(100.dp)) {
-            items(room.players.values.toList()) { p -> 
-                Text("${p.name}: $${p.money} ${if (!p.isAlive) "❌" else ""} ${if (p.id == room.hostId) "(Host)" else ""}") 
-            }
-        }
-
-        if (room.status == "PLAYING") {
-            if (!currentPlayer.isAlive) {
-                Text("HAS SIDO ELIMINADO", color = Color.Red, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
-            } else if (currentPlayer.turnPlayed < room.currentTurn) {
-                Row(modifier = Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    Button(onClick = { viewModel.performAction(room.id, currentPlayerId, "SAVE") }) { Text("Ahorrar") }
-                    Button(onClick = { viewModel.performAction(room.id, currentPlayerId, "INVEST") }) { Text("Invertir") }
-                    Button(onClick = { viewModel.performAction(room.id, currentPlayerId, "SPEND") }) { Text("Gastar") }
-                }
-            } else {
-                Text("Turno completado. Esperando...", color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
-            }
-        } else if (room.status == "FINISHED") {
-            val hasWon = currentPlayer.isAlive && currentPlayer.money > 0
-            Text(if (hasWon) "¡HAS GANADO!" else "HAS PERDIDO", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = if (hasWon) Color.Green else Color.Red, modifier = Modifier.align(Alignment.CenterHorizontally))
-            if (isHost) {
-                Button(onClick = { viewModel.restartGame(room.id) }, modifier = Modifier.fillMaxWidth()) { Text("Jugar de nuevo") }
-            }
-        }
-
-        Spacer(modifier = Modifier.weight(1f))
-        ChatSection(messages, onSendMessage = { viewModel.sendMessage(room.id, it, currentPlayer.name) })
-    }
-}
-
-@Composable
-fun ChatSection(messages: List<ChatMessage>, onSendMessage: (String) -> Unit) {
-    var text by remember { mutableStateOf("") }
-    Column(modifier = Modifier.fillMaxWidth().height(180.dp).background(Color.LightGray.copy(alpha = 0.1f)).padding(8.dp)) {
-        LazyColumn(modifier = Modifier.weight(1f)) {
-            items(messages) { msg -> Text("${msg.senderName}: ${msg.text}", fontSize = 12.sp) }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextField(
-                value = text, 
-                onValueChange = { text = it }, 
-                modifier = Modifier.weight(1f), 
-                placeholder = { Text("Chat...") }, 
-                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
-            )
-            IconButton(onClick = { if (text.isNotBlank()) { onSendMessage(text); text = "" } }) {
-                Text("OK", fontSize = 10.sp)
-            }
-        }
-    }
-}
